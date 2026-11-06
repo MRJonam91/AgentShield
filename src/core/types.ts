@@ -13,6 +13,14 @@ export interface RateLimitConstraint {
   windowSeconds: number;
 }
 
+export interface SessionQuotaConstraint {
+  maxCalls?: number;
+  maxCumulativeValue?: {
+    field: string;
+    max: number;
+  };
+}
+
 export interface NumericBound {
   min?: number;
   max?: number;
@@ -27,14 +35,20 @@ export interface PolicyConstraints {
   allowedCommands?: string[];
   /** Regex patterns forbidden for command/shell execution */
   forbiddenCommands?: string[];
+  /** Allowed domains for network/fetch operations (protects against SSRF) */
+  allowedDomains?: string[];
+  /** If true, blocks DROP, DELETE, UPDATE, INSERT, ALTER on SQL queries */
+  readOnlySql?: boolean;
   /** Regex patterns to validate specific string arguments (supports dot-notation for nested fields): key -> regex string */
   argumentPatterns?: Record<string, string>;
   /** Exact match rules for arguments (supports dot-notation) */
   argumentMatches?: Record<string, unknown>;
   /** Numeric min/max boundaries on numeric arguments (supports dot-notation) */
   numericBounds?: Record<string, NumericBound>;
-  /** Rate limit constraints */
+  /** Rate limit constraints (sliding window) */
   rateLimit?: RateLimitConstraint;
+  /** Session quota constraints (cumulative per session) */
+  sessionQuota?: SessionQuotaConstraint;
   /** Max allowed payload string length */
   maxArgumentLength?: number;
 }
@@ -57,6 +71,8 @@ export interface ShieldPolicy {
   version: "1.0";
   name?: string;
   description?: string;
+  /** Path to base policy to inherit rules from */
+  extends?: string;
   /** Action applied when no explicit rule matches */
   defaultAction: PolicyAction;
   rules: PolicyRule[];
@@ -65,6 +81,7 @@ export interface ShieldPolicy {
 export interface ToolCallRequest {
   agentId: string;
   tool: string;
+  sessionId?: string;
   args?: Record<string, unknown>;
   context?: Record<string, unknown>;
 }
@@ -99,6 +116,16 @@ export interface AuditVerificationResult {
   totalRecords: number;
   error?: string;
   tamperedIndex?: number;
+}
+
+export interface AuditStats {
+  totalRecords: number;
+  valid: boolean;
+  decisions: Record<DecisionVerdict, number>;
+  uniqueAgents: number;
+  uniqueTools: number;
+  firstTimestamp?: string;
+  lastTimestamp?: string;
 }
 
 export interface AuditQueryFilter {

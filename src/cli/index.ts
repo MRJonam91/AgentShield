@@ -12,7 +12,7 @@ import { AgentShield } from "../core/engine.ts";
 import type { DecisionVerdict, ShieldPolicy } from "../core/types.ts";
 import { SPONSOR_HELP_LINE, sponsorFooter } from "../sponsor.ts";
 
-const VERSION = "0.2.0-alpha.1";
+const VERSION = "0.3.0-beta.1";
 
 const useColors = process.stdout.isTTY && !process.env.NO_COLOR;
 const c = {
@@ -31,16 +31,20 @@ Usage:
 
 Commands:
   init                     Create a default starter agentshield.json policy
+  validate                 Validate syntax and integrity of a policy file
   eval                     Evaluate a tool call request without executing it
   exec                     Evaluate and safely execute a command if allowed
   mcp                      Proxy an MCP stdio server with active policy guard
   audit verify             Verify cryptographic hash chain integrity of audit log
-  audit tail               Show recent audit trail events
+  audit stats              Display forensic summary and decision statistics
   audit search             Query and filter audit trail events
+  audit export             Export audit trail in JSON, CSV, or Markdown format
+  audit tail               Show recent audit trail events
 
 Options for eval/exec:
   --tool <name>            Tool name (e.g. read_file, exec_command, query_db)
   --agent <id>             Calling agent identifier (default: "default-agent")
+  --session <id>           Session ID for quota and budget tracking
   --args <json>            Tool arguments formatted as JSON string (default: "{}")
   --context <json>         Context object as JSON string (e.g. '{"env":"prod"}')
   --policy <file>          Path to policy file (default: "./agentshield.json" or $AGENTSHIELD_POLICY)
@@ -48,7 +52,9 @@ Options for eval/exec:
   --secret <key>           Secret key for HMAC signature verification ($AGENTSHIELD_SECRET)
   --timeout <sec>          Human prompt timeout in seconds (default: 30)
 
-Options for audit search:
+Options for audit search/export:
+  --format <fmt>           Export format: json, csv, or markdown (default: json)
+  --out <file>             Save exported output to file instead of stdout
   --agent <id>             Filter by agent ID
   --tool <name>            Filter by tool name
   --decision <verdict>     Filter by verdict (ALLOW, DENY, ASK_APPROVED, ASK_REJECTED)
@@ -216,6 +222,33 @@ async function main() {
     return;
   }
 
+  // Command: validate
+  if (command === "validate") {
+    if (!fs.existsSync(policyFile)) {
+      console.error(c.red(`Error: Policy file '${policyFile}' not found.`));
+      process.exitCode = 1;
+      return;
+    }
+    try {
+      const raw = JSON.parse(fs.readFileSync(policyFile, "utf8"));
+      const validation = AgentShield.validatePolicy(raw);
+      if (validation.valid) {
+        console.log(c.green(`✓ Policy '${policyFile}' is VALID.`));
+      } else {
+        console.error(c.red(`✗ Policy validation failed with ${validation.errors.length} error(s):`));
+        for (const err of validation.errors) {
+          console.error(c.red(`  - ${err}`));
+        }
+        process.exitCode = 1;
+      }
+    } catch (err) {
+      console.error(c.red(`✗ Failed to parse JSON in '${policyFile}': ${(err as Error).message}`));
+      process.exitCode = 1;
+    }
+    sponsorFooter("agentshield");
+    return;
+  }
+
   // Command: audit verify
   if (command === "audit" && subCommand === "verify") {
     console.log(`Verifying audit trail integrity in: ${c.cyan(auditFile)}...`);
@@ -234,6 +267,57 @@ async function main() {
         console.error(c.red(`  Tampering detected at record index: ${verification.tamperedIndex}`));
       }
       process.exitCode = 2;
+    }
+    sponsorFooter("agentshield");
+    return;
+  }
+
+  // Command: audit stats
+  if (command === "audit" && subCommand === "stats") {
+    if (!fs.existsSync(auditFile)) {
+      console.log(c.yellow(`No audit log found at ${auditFile}`));
+      return;
+    }
+    const audit = new AuditTrail(auditFile, secretKey);
+    const stats = audit.getStats();
+
+    console.log(`${c.bold("AgentShield Audit Statistics:")}`);
+    console.log(`  Log File:       ${c.cyan(auditFile)}`);
+    console.log(`  Integrity:      ${stats.valid ? c.green("VALID (Chain intact)") : c.red("INVALID / TAMPERED")}`);
+    console.log(`  Total Records:  ${stats.totalRecords}`);
+    console.log(`  Unique Agents:  ${stats.uniqueAgents}`);
+    console.log(`  Unique Tools:   ${stats.uniqueTools}`);
+    console.log(`  Decisions:`);
+    console.log(`    - ALLOW:        ${c.green(String(stats.decisions.ALLOW))}`);
+    console.log(`    - DENY:         ${c.red(String(stats.decisions.DENY))}`);
+    console.log(`    - ASK_APPROVED: ${c.cyan(String(stats.decisions.ASK_APPROVED))}`);
+    console.log(`    - ASK_REJECTED: ${c.yellow(String(stats.decisions.ASK_REJECTED))}`);
+    if (stats.firstTimestamp) console.log(`  First Event:    ${c.dim(stats.firstTimestamp)}`);
+    if (stats.lastTimestamp) console.log(`  Latest Event:   ${c.dim(stats.lastTimestamp)}`);
+    sponsorFooter("agentshield");
+    return;
+  }
+
+  // Command: audit export
+  if (command === "audit" && subCommand === "export") {
+    if (!fs.existsSync(auditFile)) {
+      console.error(c.red(`No audit log found at ${auditFile}`));
+      process.exitCode = 1;
+      return;
+    }
+    const fmt = (flags.format || "json").toLowerCase();
+    if (fmt !== "json" && fmt !== "csv" && fmt !== "markdown") {
+      console.error(c.red(`Invalid export format '${fmt}'. Must be json, csv, or markdown.`));
+      process.exitCode = 1;
+      return;
+    }
+    const audit = new AuditTrail(auditFile, secretKey);
+    const exported = audit.exportAs(fmt);
+    if (flags.out) {
+      fs.writeFileSync(flags.out, exported, "utf8");
+      console.log(c.green(`✓ Exported ${fmt.toUpperCase()} report to ${flags.out}`));
+    } else {
+      process.stdout.write(exported + "\n");
     }
     sponsorFooter("agentshield");
     return;
@@ -312,6 +396,7 @@ async function main() {
     }
 
     const agentId = flags.agent || "default-agent";
+    const sessionId = flags.session;
     let argsObj: Record<string, unknown> = {};
     if (flags.args) {
       try {
@@ -347,7 +432,7 @@ async function main() {
       },
     });
 
-    const result = await shield.evaluate({ agentId, tool, args: argsObj, context: contextObj });
+    const result = await shield.evaluate({ agentId, tool, sessionId, args: argsObj, context: contextObj });
     console.log(JSON.stringify(result, null, 2));
     if (result.verdict === "DENY" || result.verdict === "ASK_REJECTED") {
       process.exitCode = 1;
@@ -369,6 +454,7 @@ async function main() {
     const policy = fs.existsSync(policyFile) ? AgentShield.loadPolicyFromFile(policyFile) : STARTER_POLICY;
     const tool = flags.tool || "exec";
     const agentId = flags.agent || "default-agent";
+    const sessionId = flags.session;
     const rawCmd = trailingCommand.join(" ");
 
     let argsObj: Record<string, unknown> = { command: rawCmd };
@@ -393,7 +479,7 @@ async function main() {
       },
     });
 
-    const evalResult = await shield.evaluate({ agentId, tool, args: argsObj });
+    const evalResult = await shield.evaluate({ agentId, tool, sessionId, args: argsObj });
     if (evalResult.verdict === "DENY" || evalResult.verdict === "ASK_REJECTED") {
       console.error(c.red(`✗ AgentShield BLOCKED execution: ${evalResult.reason}`));
       process.exitCode = 1;

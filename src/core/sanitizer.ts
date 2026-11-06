@@ -50,12 +50,10 @@ export function isPathSafe(
   allowedRoots: string[] = [],
   forbiddenPatterns: string[] = []
 ): { safe: boolean; reason?: string } {
-  // Decode URL encoding and check for null bytes
   let decoded = targetPath;
   try {
     decoded = decodeURIComponent(targetPath);
   } catch {
-    // If malformed URI, treat as suspicious
     return { safe: false, reason: "Malformed URI encoding in file path" };
   }
 
@@ -63,7 +61,6 @@ export function isPathSafe(
     return { safe: false, reason: "Null byte injection detected in file path" };
   }
 
-  // Check explicit forbidden patterns (case-insensitive)
   const lower = decoded.toLowerCase().replace(/\\/g, "/");
   for (const forbidden of forbiddenPatterns) {
     const forbLower = forbidden.toLowerCase().replace(/\\/g, "/");
@@ -72,7 +69,6 @@ export function isPathSafe(
     }
   }
 
-  // Common sensitive file blocks
   const sensitiveFiles = [".env", "id_rsa", "id_ed25519", ".git/config", "/etc/passwd", "/etc/shadow", "c:\\windows\\system32"];
   for (const sensitive of sensitiveFiles) {
     if (lower.includes(sensitive)) {
@@ -97,6 +93,130 @@ export function isPathSafe(
       safe: false,
       reason: `Target path '${targetPath}' is outside authorized directory roots: [${allowedRoots.join(", ")}]`,
     };
+  }
+
+  return { safe: true };
+}
+
+/**
+ * Checks whether a shell command is safe against injection and destructive patterns
+ */
+export function isCommandSafe(
+  cmd: string,
+  allowedCommands?: string[],
+  forbiddenCommands?: string[]
+): { safe: boolean; reason?: string } {
+  const trimmed = cmd.trim();
+  if (!trimmed) {
+    return { safe: false, reason: "Empty command string" };
+  }
+
+  // Null byte or control character checks
+  if (/[\0\x01-\x08\x0E-\x1F]/.test(trimmed)) {
+    return { safe: false, reason: "Suspicious control characters in command" };
+  }
+
+  // Forbidden patterns check
+  if (forbiddenCommands) {
+    for (const pattern of forbiddenCommands) {
+      if (new RegExp(pattern, "i").test(trimmed)) {
+        return { safe: false, reason: `Command matches forbidden pattern: '${pattern}'` };
+      }
+    }
+  }
+
+  // Whitelist check
+  if (allowedCommands && allowedCommands.length > 0) {
+    const matched = allowedCommands.some((pat) => new RegExp(pat, "i").test(trimmed));
+    if (!matched) {
+      return { safe: false, reason: `Command '${trimmed}' not in allowed commands whitelist` };
+    }
+  }
+
+  return { safe: true };
+}
+
+/**
+ * Checks whether a URL is safe against SSRF (Server-Side Request Forgery) attacks
+ */
+export function isUrlSafe(
+  urlStr: string,
+  allowedDomains?: string[]
+): { safe: boolean; reason?: string } {
+  let parsed: URL;
+  try {
+    parsed = new URL(urlStr);
+  } catch {
+    return { safe: false, reason: `Invalid URL format: '${urlStr}'` };
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return { safe: false, reason: `Disallowed URL protocol: '${parsed.protocol}' (must be http or https)` };
+  }
+
+  const host = parsed.hostname.toLowerCase();
+
+  // Localhost & metadata addresses
+  if (
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "0.0.0.0" ||
+    host === "::1" ||
+    host === "[::1]" ||
+    host === "169.254.169.254" || // AWS / GCP / Azure metadata service
+    host === "metadata.google.internal" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local")
+  ) {
+    return { safe: false, reason: `SSRF protection: access to loopback/metadata host '${host}' is blocked` };
+  }
+
+  // Private IPv4 ranges
+  const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const p1 = parseInt(ipv4Match[1]!, 10);
+    const p2 = parseInt(ipv4Match[2]!, 10);
+    if (
+      p1 === 10 || // 10.0.0.0/8
+      (p1 === 172 && p2 >= 16 && p2 <= 31) || // 172.16.0.0/12
+      (p1 === 192 && p2 === 168) || // 192.168.0.0/16
+      (p1 === 169 && p2 === 254) // 169.254.0.0/16 link-local
+    ) {
+      return { safe: false, reason: `SSRF protection: access to private IP address '${host}' is blocked` };
+    }
+  }
+
+  // Allowed domains check
+  if (allowedDomains && allowedDomains.length > 0) {
+    const isAllowed = allowedDomains.some((d) => {
+      const lowerD = d.toLowerCase();
+      return host === lowerD || host.endsWith("." + lowerD);
+    });
+    if (!isAllowed) {
+      return { safe: false, reason: `Host '${host}' not in allowed domains whitelist: [${allowedDomains.join(", ")}]` };
+    }
+  }
+
+  return { safe: true };
+}
+
+/**
+ * Checks whether an SQL statement is safe, preventing destructive statements when readOnly
+ */
+export function isSqlSafe(
+  query: string,
+  readOnly: boolean = false
+): { safe: boolean; reason?: string } {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return { safe: false, reason: "Empty SQL query" };
+  }
+
+  if (readOnly) {
+    const destructiveRegex = /\b(DROP|TRUNCATE|ALTER|DELETE|UPDATE|INSERT|CREATE|REPLACE|GRANT|REVOKE)\b/i;
+    if (destructiveRegex.test(trimmed)) {
+      return { safe: false, reason: "Destructive SQL operation detected on read-only database tool" };
+    }
   }
 
   return { safe: true };

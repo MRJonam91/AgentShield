@@ -12,6 +12,11 @@ EN — Purpose: Different agents access tools and data with unclear permissions.
   - Firma HMAC crittografica per audit trail con chiave segreta (`auditSecret`).
   - Vincoli su proprietà annidate (dot-notation), limiti numerici (`numericBounds`) e condizioni di contesto (`contextConditions`).
   - Timeout automatico per conferme umane (default 30s) con fallback sicuro su rifiuto.
-  - Interfaccia CLI arricchita con comando `audit search`, styling ANSI zero-dependency e supporto a variabili d'ambiente.
-- **Standard applicati**: `../_repo-kit/REPO-STANDARDS.md` rispettato integralmente (core < 1.500 righe [945 righe], licenza Apache-2.0, NOTICE, LICENSING.md, donazioni, CI, 7/7 marker verificati in `_provenance/AgentShield.json`).
-- **Misura di successo osservata**: 22/22 test automatizzati passati con successo.
+- **Avanzamento a Versione Beta (v0.3.0-beta.1)**:
+  - Protezione SSRF per strumenti di rete con blocco IP privati, cloud metadata e whitelist domini.
+  - Analisi SQL euristica per database read-only.
+  - Tracciamento quote di sessione e budget cumulativi (`sessionQuota`).
+  - Ereditarietà policy (`extends`) e validazione strutturale (`agentshield validate`).
+  - Statistiche ed esportazione forense audit in JSON, CSV e Markdown (`audit stats`, `audit export`).
+- **Standard applicati**: `../_repo-kit/REPO-STANDARDS.md` rispettato integralmente (core < 1.500 righe [1.253 righe], licenza Apache-2.0, NOTICE, LICENSING.md, donazioni, CI, 7/7 marker verificati in `_provenance/AgentShield.json`).
+- **Misura di successo osservata**: 29/29 test automatizzati passati con successo.

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { AuditTrail } from "./audit.ts";
 import { DEFAULT_POLICY_FILE, SHIELD_ERROR_UNAUTHORIZED } from "./constants.ts";
-import { isPathSafe, redactSecrets } from "./sanitizer.ts";
+import { isCommandSafe, isPathSafe, isSqlSafe, isUrlSafe, redactSecrets } from "./sanitizer.ts";
 import type {
   DecisionVerdict,
   EvaluationResult,
@@ -74,6 +74,7 @@ export class AgentShield {
   private onHumanApproval?: HumanApprovalHandler;
   private askTimeoutSeconds: number;
   private callHistory: Map<string, number[]> = new Map();
+  private sessionStats: Map<string, { callCount: number; cumulativeTotals: Record<string, number> }> = new Map();
 
   constructor(options: ShieldOptions) {
     this.policy = options.policy;
@@ -91,6 +92,15 @@ export class AgentShield {
 
   public getAuditTrail(): AuditTrail {
     return this.audit;
+  }
+
+  public resetSession(sessionId: string): void {
+    this.sessionStats.delete(sessionId);
+  }
+
+  public getSessionStats(sessionId: string): { callCount: number; cumulativeTotals: Record<string, number> } | undefined {
+    const stats = this.sessionStats.get(sessionId);
+    return stats ? JSON.parse(JSON.stringify(stats)) : undefined;
   }
 
   /**
@@ -115,11 +125,12 @@ export class AgentShield {
   private validateConstraints(
     args: Record<string, unknown>,
     constraints?: PolicyConstraints,
-    agentToolKey?: string
+    agentToolKey?: string,
+    sessionId?: string
   ): { valid: boolean; reason?: string } {
     if (!constraints) return { valid: true };
 
-    // Rate limit
+    // Rate limit (sliding window)
     if (constraints.rateLimit && agentToolKey) {
       const allowed = this.checkRateLimit(
         agentToolKey,
@@ -131,6 +142,31 @@ export class AgentShield {
           valid: false,
           reason: `Rate limit exceeded: max ${constraints.rateLimit.maxCalls} calls per ${constraints.rateLimit.windowSeconds}s`,
         };
+      }
+    }
+
+    // Session quota check (cumulative budget)
+    if (constraints.sessionQuota && sessionId) {
+      const stats = this.sessionStats.get(sessionId) || { callCount: 0, cumulativeTotals: {} };
+      if (constraints.sessionQuota.maxCalls !== undefined && stats.callCount >= constraints.sessionQuota.maxCalls) {
+        return {
+          valid: false,
+          reason: `Session call quota exceeded: max ${constraints.sessionQuota.maxCalls} calls allowed per session`,
+        };
+      }
+
+      if (constraints.sessionQuota.maxCumulativeValue) {
+        const { field, max } = constraints.sessionQuota.maxCumulativeValue;
+        const val = getNestedProperty(args, field);
+        if (typeof val === "number") {
+          const currentTotal = stats.cumulativeTotals[field] || 0;
+          if (currentTotal + val > max) {
+            return {
+              valid: false,
+              reason: `Session cumulative budget exceeded for '${field}': attempted +${val}, current ${currentTotal}, max limit ${max}`,
+            };
+          }
+        }
       }
     }
 
@@ -180,19 +216,7 @@ export class AgentShield {
     }
 
     // Path constraints on path-like arguments
-    const pathKeys = [
-      "path",
-      "filePath",
-      "filepath",
-      "file",
-      "dest",
-      "destination",
-      "source",
-      "src",
-      "target",
-      "dir",
-      "directory",
-    ];
+    const pathKeys = ["path", "filePath", "filepath", "file", "dest", "destination", "source", "src", "target", "dir", "directory"];
     for (const key of pathKeys) {
       const val = getNestedProperty(args, key);
       if (typeof val === "string") {
@@ -208,20 +232,36 @@ export class AgentShield {
     for (const key of cmdKeys) {
       const val = getNestedProperty(args, key);
       if (typeof val === "string") {
-        if (constraints.forbiddenCommands) {
-          for (const pattern of constraints.forbiddenCommands) {
-            const regex = getCachedRegex(pattern, "i");
-            if (regex.test(val)) {
-              return { valid: false, reason: `Command matches forbidden pattern: '${pattern}'` };
-            }
+        const cmdCheck = isCommandSafe(val, constraints.allowedCommands, constraints.forbiddenCommands);
+        if (!cmdCheck.safe) {
+          return { valid: false, reason: cmdCheck.reason };
+        }
+      }
+    }
+
+    // SSRF / Network URL protection
+    if (constraints.allowedDomains) {
+      const urlKeys = ["url", "uri", "endpoint", "webhook", "targetUrl", "target_url"];
+      for (const key of urlKeys) {
+        const val = getNestedProperty(args, key);
+        if (typeof val === "string") {
+          const urlCheck = isUrlSafe(val, constraints.allowedDomains);
+          if (!urlCheck.safe) {
+            return { valid: false, reason: urlCheck.reason };
           }
         }
-        if (constraints.allowedCommands && constraints.allowedCommands.length > 0) {
-          const matched = constraints.allowedCommands.some((pat) =>
-            getCachedRegex(pat, "i").test(val)
-          );
-          if (!matched) {
-            return { valid: false, reason: `Command '${val}' not in allowed commands whitelist` };
+      }
+    }
+
+    // SQL safety protection
+    if (constraints.readOnlySql) {
+      const sqlKeys = ["query", "sql", "statement"];
+      for (const key of sqlKeys) {
+        const val = getNestedProperty(args, key);
+        if (typeof val === "string") {
+          const sqlCheck = isSqlSafe(val, true);
+          if (!sqlCheck.safe) {
+            return { valid: false, reason: sqlCheck.reason };
           }
         }
       }
@@ -242,6 +282,22 @@ export class AgentShield {
     }
 
     return { valid: true };
+  }
+
+  private updateSessionStats(sessionId: string, args: Record<string, unknown>, constraints?: PolicyConstraints): void {
+    if (!constraints?.sessionQuota) return;
+    const stats = this.sessionStats.get(sessionId) || { callCount: 0, cumulativeTotals: {} };
+    stats.callCount++;
+
+    if (constraints.sessionQuota.maxCumulativeValue) {
+      const { field } = constraints.sessionQuota.maxCumulativeValue;
+      const val = getNestedProperty(args, field);
+      if (typeof val === "number") {
+        stats.cumulativeTotals[field] = (stats.cumulativeTotals[field] || 0) + val;
+      }
+    }
+
+    this.sessionStats.set(sessionId, stats);
   }
 
   /**
@@ -325,7 +381,12 @@ export class AgentShield {
 
     // Validate constraints if rule exists
     if (matchedRule?.constraints) {
-      const constraintCheck = this.validateConstraints(sanitizedArgs, matchedRule.constraints, rateLimitKey);
+      const constraintCheck = this.validateConstraints(
+        sanitizedArgs,
+        matchedRule.constraints,
+        rateLimitKey,
+        request.sessionId
+      );
       if (!constraintCheck.valid) {
         const verdict: DecisionVerdict = "DENY";
         const reason = constraintCheck.reason || SHIELD_ERROR_UNAUTHORIZED;
@@ -376,6 +437,9 @@ export class AgentShield {
       sanitizedArgs = redactSecrets(sanitizedArgs);
       const verdict: DecisionVerdict = "ALLOW";
       const reason = matchedRule?.reason || "Arguments sanitized and permitted";
+      if (request.sessionId) {
+        this.updateSessionStats(request.sessionId, sanitizedArgs, matchedRule?.constraints);
+      }
       this.audit.append({
         agentId: request.agentId,
         tool: request.tool,
@@ -430,6 +494,10 @@ export class AgentShield {
         ? "Human-in-the-loop approved execution"
         : "Human-in-the-loop rejected or timed out execution";
 
+      if (approved && request.sessionId) {
+        this.updateSessionStats(request.sessionId, sanitizedArgs, matchedRule?.constraints);
+      }
+
       this.audit.append({
         agentId: request.agentId,
         tool: request.tool,
@@ -453,6 +521,9 @@ export class AgentShield {
     // Default 'allow'
     const verdict: DecisionVerdict = "ALLOW";
     const reason = matchedRule?.reason || "Execution permitted by policy";
+    if (request.sessionId) {
+      this.updateSessionStats(request.sessionId, sanitizedArgs, matchedRule?.constraints);
+    }
     this.audit.append({
       agentId: request.agentId,
       tool: request.tool,
@@ -474,7 +545,54 @@ export class AgentShield {
   }
 
   /**
-   * Helper to load policy from JSON file
+   * Validates structural syntax of a policy configuration object
+   */
+  public static validatePolicy(policy: unknown): { valid: boolean; errors: string[] } {
+    const errors: string[] = [];
+    if (!policy || typeof policy !== "object") {
+      return { valid: false, errors: ["Policy must be a non-null object"] };
+    }
+
+    const p = policy as Partial<ShieldPolicy>;
+    if (p.version !== "1.0") {
+      errors.push("Invalid policy version: expected '1.0'");
+    }
+
+    if (!p.defaultAction || !["allow", "deny", "ask", "redact"].includes(p.defaultAction)) {
+      errors.push("Invalid or missing 'defaultAction': must be 'allow', 'deny', 'ask', or 'redact'");
+    }
+
+    if (!Array.isArray(p.rules)) {
+      errors.push("'rules' must be an array");
+    } else {
+      const ruleIds = new Set<string>();
+      for (let i = 0; i < p.rules.length; i++) {
+        const rule = p.rules[i];
+        if (!rule || typeof rule !== "object") {
+          errors.push(`Rule at index ${i} is not a valid object`);
+          continue;
+        }
+        if (!rule.id || typeof rule.id !== "string") {
+          errors.push(`Rule at index ${i} is missing a string 'id'`);
+        } else if (ruleIds.has(rule.id)) {
+          errors.push(`Duplicate rule id: '${rule.id}'`);
+        } else {
+          ruleIds.add(rule.id);
+        }
+        if (!rule.tool) {
+          errors.push(`Rule '${rule.id || i}' missing 'tool' pattern`);
+        }
+        if (!rule.action || !["allow", "deny", "ask", "redact"].includes(rule.action)) {
+          errors.push(`Rule '${rule.id || i}' has invalid action: '${String(rule.action)}'`);
+        }
+      }
+    }
+
+    return { valid: errors.length === 0, errors };
+  }
+
+  /**
+   * Helper to load policy from JSON file with 'extends' inheritance support
    */
   public static loadPolicyFromFile(filePath: string = DEFAULT_POLICY_FILE): ShieldPolicy {
     const resolved = path.resolve(filePath);
@@ -482,6 +600,25 @@ export class AgentShield {
       throw new Error(`Policy file not found: ${filePath}`);
     }
     const raw = fs.readFileSync(resolved, "utf8");
-    return JSON.parse(raw) as ShieldPolicy;
+    const childPolicy = JSON.parse(raw) as ShieldPolicy;
+
+    // Handle policy inheritance if 'extends' is present
+    if (childPolicy.extends) {
+      const baseResolved = path.resolve(path.dirname(resolved), childPolicy.extends);
+      if (!fs.existsSync(baseResolved)) {
+        throw new Error(`Base policy file to extend not found: ${baseResolved}`);
+      }
+      const basePolicy = AgentShield.loadPolicyFromFile(baseResolved);
+      const childRuleIds = new Set(childPolicy.rules.map((r) => r.id));
+      const inheritedRules = basePolicy.rules.filter((r) => !childRuleIds.has(r.id));
+
+      return {
+        ...basePolicy,
+        ...childPolicy,
+        rules: [...childPolicy.rules, ...inheritedRules],
+      };
+    }
+
+    return childPolicy;
   }
 }

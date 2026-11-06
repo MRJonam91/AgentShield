@@ -6,6 +6,16 @@ All notable changes to this project are documented in this file.
 Il formato è basato su [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 e rispetta il [Semantic Versioning](https://semver.org/).
 
+## [0.3.0-beta.1] - 2026-11-06
+
+### Added / Aggiunto
+- **SSRF Network Protection**: protezione contro Server-Side Request Forgery su strumenti di rete (`fetch`, `http_request`, `webhook`), blocco automatico di loopback (`localhost`, `127.0.0.1`), metadata cloud (`169.254.169.254`, `metadata.google.internal`), reti private (RFC 1918) e whitelist domini (`allowedDomains`).
+- **SQL Safety Analyzer**: analisi euristica per database read-only (`readOnlySql`), con blocco di operazioni distruttive (`DROP`, `DELETE`, `UPDATE`, `INSERT`, `TRUNCATE`, `ALTER`) ed evasioni tramite commenti.
+- **Session Quotas & Cumulative Budgets**: tracciamento del budget cumulativo e quote per sessione agente (`sessionQuota`), con controllo sul numero massimo di chiamate e sui valori cumulativi monetari o contabili (es. budget massimo di spesa per sessione).
+- **Policy Inheritance (`extends`) & Validation**: supporto all'ereditarietà delle policy tramite `extends: "./base.json"` e comando di validazione strutturale `agentshield validate`.
+- **Forensic Audit Stats & Export**: nuovo comando `agentshield audit stats` per sintesi statistica forense delle decisioni e `agentshield audit export` con esportazione in JSON, CSV e Markdown per audit e conformità.
+- **Suite di Test Estesa**: 29 test automatizzati con copertura completa di tutte le difese di sicurezza Beta.
+
 ## [0.2.0-alpha.1] - 2026-11-06
 
 ### Added / Aggiunto

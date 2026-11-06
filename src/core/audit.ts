@@ -7,6 +7,7 @@ import { GENESIS_PREV_HASH } from "./constants.ts";
 import type {
   AuditQueryFilter,
   AuditRecord,
+  AuditStats,
   AuditVerificationResult,
   DecisionVerdict,
 } from "./types.ts";
@@ -288,6 +289,73 @@ export class AuditTrail {
     const limit = filter.limit !== undefined ? filter.limit : result.length;
 
     return result.slice(offset, offset + limit);
+  }
+
+  public getStats(): AuditStats {
+    const records = this.inMemoryRecords;
+    const verification = this.verify();
+    const decisions: Record<DecisionVerdict, number> = {
+      ALLOW: 0,
+      DENY: 0,
+      ASK_APPROVED: 0,
+      ASK_REJECTED: 0,
+    };
+    const agents = new Set<string>();
+    const tools = new Set<string>();
+
+    for (const r of records) {
+      if (r.decision in decisions) {
+        decisions[r.decision]++;
+      }
+      agents.add(r.agentId);
+      tools.add(r.tool);
+    }
+
+    return {
+      totalRecords: records.length,
+      valid: verification.valid,
+      decisions,
+      uniqueAgents: agents.size,
+      uniqueTools: tools.size,
+      firstTimestamp: records[0]?.timestamp,
+      lastTimestamp: records[records.length - 1]?.timestamp,
+    };
+  }
+
+  public exportAs(format: "json" | "csv" | "markdown"): string {
+    const records = this.inMemoryRecords;
+
+    if (format === "json") {
+      return JSON.stringify(records, null, 2);
+    }
+
+    if (format === "csv") {
+      const header = "index,timestamp,agentId,tool,decision,reason,hash,signature\n";
+      const rows = records.map((r) => {
+        const cleanReason = `"${r.reason.replace(/"/g, '""')}"`;
+        return `${r.index},"${r.timestamp}","${r.agentId}","${r.tool}","${r.decision}",${cleanReason},"${r.hash}","${r.signature || ""}"`;
+      });
+      return header + rows.join("\n");
+    }
+
+    // Markdown
+    const lines = [
+      "# AgentShield Audit Trail Report",
+      "",
+      `Generated: ${new Date().toISOString()}`,
+      `Total Records: ${records.length}`,
+      "",
+      "| # | Timestamp | Agent | Tool | Verdict | Reason | Hash |",
+      "|---|---|---|---|---|---|---|",
+    ];
+
+    for (const r of records) {
+      lines.push(
+        `| ${r.index} | ${r.timestamp} | ${r.agentId} | ${r.tool} | **${r.decision}** | ${r.reason} | \`${r.hash.slice(0, 10)}...\` |`
+      );
+    }
+
+    return lines.join("\n");
   }
 
   public verify(): AuditVerificationResult {
