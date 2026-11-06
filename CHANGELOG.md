@@ -6,6 +6,18 @@ All notable changes to this project are documented in this file.
 Il formato è basato su [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 e rispetta il [Semantic Versioning](https://semver.org/).
 
+## [1.0.1] - 2026-11-06
+
+### Security & Robustness Hardening / Miglioramenti di Sicurezza e Robustezza
+- **Windows Security & ADS Protection**: blocco di NTFS Alternate Data Streams (`test.txt:stream`, `test.txt::$DATA`) e dei nomi di periferiche DOS riservati (`CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9`) in `isPathSafe`.
+- **SSRF Hardening**: potenziamento del rilevatore SSRF contro notazioni IPv6-mapped IPv4 private e loopback (`[::ffff:127.0.0.1]`, `[fe80:]`, `[fc]`, `[fd]`) in `isUrlSafe`.
+- **Rule Specificity Scoring**: precedenza deterministica basata su punteggio di specificità delle regole (`matchRule`), garantendo che regole specifiche per singolo tool abbiano sempre priorità rispetto alle regole generiche wildcard (`*`).
+- **Deep Structural Argument Matching**: confronto profondo e strutturale di oggetti e array annidati in `argumentMatches` con ordinamento canonico delle chiavi.
+- **Circular Reference Protection**: sanificazione ricorsiva protetta con `WeakSet` in `redactSecrets`, prevenendo blocchi o stack overflow su grafi di oggetti ciclici.
+- **MCP Error Handling & JSON-RPC 2.0 Compliance**: gestione corretta delle notifiche JSON-RPC 2.0 (nessuna risposta inviata se il messaggio è privo di `id`) e gestione errori sull'evento `error` del processo figlio MCP spawnato.
+- **CLI Shell Tolerance**: helper `parseLooseJson` per gestire argomenti JSON con apici rimossi o formati rilassati tipici di alcune shell (es. PowerShell).
+- **Test Suite Expansion**: 34 test automatizzati (5 nuovi test per edge cases e vulnerabilità specifiche), con tempo di esecuzione < 500ms.
+
 ## [1.0.0] - 2026-11-06
 
 ### Stable Release / Versione Stabile

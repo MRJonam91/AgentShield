@@ -12,9 +12,10 @@ const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp; replacement: strin
 ];
 
 /**
- * Redacts sensitive credentials, tokens and private keys from strings and objects
+ * Redacts sensitive credentials, tokens and private keys from strings and objects.
+ * Immune to circular references via WeakSet tracking.
  */
-export function redactSecrets<T>(input: T): T {
+export function redactSecrets<T>(input: T, seen: WeakSet<object> = new WeakSet()): T {
   if (typeof input === "string") {
     let result: string = input;
     for (const { pattern, replacement } of SECRET_PATTERNS) {
@@ -24,16 +25,24 @@ export function redactSecrets<T>(input: T): T {
   }
 
   if (Array.isArray(input)) {
-    return (input.map((item) => redactSecrets(item)) as unknown) as T;
+    if (seen.has(input)) {
+      return "[CIRCULAR]" as unknown as T;
+    }
+    seen.add(input);
+    return (input.map((item) => redactSecrets(item, seen)) as unknown) as T;
   }
 
   if (input !== null && typeof input === "object") {
+    if (seen.has(input)) {
+      return "[CIRCULAR]" as unknown as T;
+    }
+    seen.add(input);
     const copy: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(input)) {
       if (/password|secret|token|apiKey|api_key|auth/i.test(key) && typeof value === "string") {
         copy[key] = "[REDACTED]";
       } else {
-        copy[key] = redactSecrets(value);
+        copy[key] = redactSecrets(value, seen);
       }
     }
     return copy as unknown as T;
@@ -43,7 +52,7 @@ export function redactSecrets<T>(input: T): T {
 }
 
 /**
- * Checks whether a given path attempts path traversal or escapes the allowed directories
+ * Checks whether a given path attempts path traversal, ADS streams, or escapes allowed directories
  */
 export function isPathSafe(
   targetPath: string,
@@ -59,6 +68,18 @@ export function isPathSafe(
 
   if (decoded.includes("\0")) {
     return { safe: false, reason: "Null byte injection detected in file path" };
+  }
+
+  // Windows reserved device names: CON, PRN, AUX, NUL, COM1-COM9, LPT1-LPT9
+  const baseName = path.basename(decoded).toUpperCase().split(".")[0] || "";
+  if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(baseName)) {
+    return { safe: false, reason: `Access to reserved device name forbidden: ${baseName}` };
+  }
+
+  // Windows Alternate Data Streams (e.g. test.txt:stream or test.txt::$DATA)
+  const withoutDrive = decoded.replace(/^[a-zA-Z]:[\\\/]/, "");
+  if (/:+[$a-zA-Z0-9_\-\.]*/.test(withoutDrive)) {
+    return { safe: false, reason: "Alternate Data Streams (ADS) in file path are forbidden" };
   }
 
   const lower = decoded.toLowerCase().replace(/\\/g, "/");
@@ -156,17 +177,23 @@ export function isUrlSafe(
 
   const host = parsed.hostname.toLowerCase();
 
-  // Localhost & metadata addresses
+  // Localhost, metadata & IPv6-mapped addresses
   if (
     host === "localhost" ||
     host === "127.0.0.1" ||
     host === "0.0.0.0" ||
     host === "::1" ||
     host === "[::1]" ||
+    host === "[::]" ||
     host === "169.254.169.254" || // AWS / GCP / Azure metadata service
     host === "metadata.google.internal" ||
     host.endsWith(".localhost") ||
-    host.endsWith(".local")
+    host.endsWith(".local") ||
+    host.startsWith("[::ffff:7f") ||
+    host.startsWith("[::ffff:127.") ||
+    host.startsWith("[fe80:") ||
+    host.startsWith("[fc") ||
+    host.startsWith("[fd")
   ) {
     return { safe: false, reason: `SSRF protection: access to loopback/metadata host '${host}' is blocked` };
   }

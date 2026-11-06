@@ -1,6 +1,6 @@
 {
   "name": "agentshield",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Deterministic AI agent tool firewall: local policy engine with verifiable deny, ask, allow and tamper-evident cryptographic audit trail for MCP and LLM tool adapters.",
   "type": "module",
   "license": "Apache-2.0",

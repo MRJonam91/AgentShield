@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
+import { fileURLToPath } from "node:url";
 import { startMcpProxy } from "../adapters/mcp.ts";
 import { AuditTrail } from "../core/audit.ts";
 import { DEFAULT_AUDIT_LOG_FILE, DEFAULT_POLICY_FILE } from "../core/constants.ts";
@@ -102,6 +103,38 @@ function parseArgs(args: string[]) {
   return { result, positional, trailingCommand };
 }
 
+export function parseLooseJson(str: string): Record<string, unknown> {
+  try {
+    return JSON.parse(str) as Record<string, unknown>;
+  } catch {
+    const trimmed = str.trim();
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      const inner = trimmed.slice(1, -1).trim();
+      const obj: Record<string, unknown> = {};
+      const pairs = inner.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+      for (const pair of pairs) {
+        const colonIdx = pair.indexOf(":");
+        if (colonIdx !== -1) {
+          const rawKey = pair.slice(0, colonIdx).trim().replace(/^["']|["']$/g, "");
+          let rawVal = pair.slice(colonIdx + 1).trim();
+          if ((rawVal.startsWith('"') && rawVal.endsWith('"')) || (rawVal.startsWith("'") && rawVal.endsWith("'"))) {
+            rawVal = rawVal.slice(1, -1);
+          }
+          if (rawVal === "true") obj[rawKey] = true;
+          else if (rawVal === "false") obj[rawKey] = false;
+          else if (rawVal === "null") obj[rawKey] = null;
+          else if (!isNaN(Number(rawVal)) && rawVal !== "") obj[rawKey] = Number(rawVal);
+          else obj[rawKey] = rawVal;
+        }
+      }
+      if (Object.keys(obj).length > 0) {
+        return obj;
+      }
+    }
+    return JSON.parse(str) as Record<string, unknown>;
+  }
+}
+
 async function askUserConfirmation(promptText: string, timeoutSec: number = 30): Promise<boolean> {
   const rl = readline.createInterface({
     input: process.stdin,
@@ -138,6 +171,15 @@ const STARTER_POLICY: ShieldPolicy = {
   defaultAction: "ask",
   rules: [
     {
+      id: "guarded-shell-commands",
+      description: "Deny destructive commands; require human confirmation for other shell executions",
+      tool: ["exec", "bash", "run_command"],
+      action: "ask",
+      constraints: {
+        forbiddenCommands: ["rm -rf", "mkfs", "dd if=", "chmod -R 777", "powershell -enc", ":(){ :|:& };:"],
+      },
+    },
+    {
       id: "allow-safe-reads",
       description: "Permit safe workspace file reads",
       tool: ["read_file", "fs:read", "get_*"],
@@ -146,12 +188,6 @@ const STARTER_POLICY: ShieldPolicy = {
         allowedPaths: ["."],
         forbiddenPaths: [".env", ".git/config", "id_rsa", "/etc/passwd"],
       },
-    },
-    {
-      id: "sanitize-secrets",
-      description: "Redact API keys and authorization tokens in tool arguments",
-      tool: "*",
-      action: "redact",
     },
     {
       id: "ask-file-writes",
@@ -163,14 +199,10 @@ const STARTER_POLICY: ShieldPolicy = {
       },
     },
     {
-      id: "block-dangerous-commands",
-      description: "Deny dangerous system destruction commands",
-      tool: ["exec", "bash", "run_command"],
-      action: "deny",
-      reason: "Execution of destructive system commands is strictly forbidden",
-      constraints: {
-        forbiddenCommands: ["rm -rf", "mkfs", "dd if=", "chmod -R 777", "powershell -enc"],
-      },
+      id: "sanitize-secrets",
+      description: "Redact API keys and authorization tokens in tool arguments",
+      tool: "*",
+      action: "redact",
     },
     {
       id: "rate-limit-queries",
@@ -400,7 +432,7 @@ async function main() {
     let argsObj: Record<string, unknown> = {};
     if (flags.args) {
       try {
-        argsObj = JSON.parse(flags.args);
+        argsObj = parseLooseJson(flags.args);
       } catch (err) {
         console.error(c.red(`Error parsing --args JSON: ${(err as Error).message}`));
         process.exitCode = 1;
@@ -411,7 +443,7 @@ async function main() {
     let contextObj: Record<string, unknown> | undefined;
     if (flags.context) {
       try {
-        contextObj = JSON.parse(flags.context);
+        contextObj = parseLooseJson(flags.context);
       } catch (err) {
         console.error(c.red(`Error parsing --context JSON: ${(err as Error).message}`));
         process.exitCode = 1;
@@ -460,7 +492,7 @@ async function main() {
     let argsObj: Record<string, unknown> = { command: rawCmd };
     if (flags.args) {
       try {
-        argsObj = { ...argsObj, ...JSON.parse(flags.args) };
+        argsObj = { ...argsObj, ...parseLooseJson(flags.args) };
       } catch {
         // ignore
       }
@@ -530,7 +562,16 @@ async function main() {
   process.exitCode = 1;
 }
 
-main().catch((err: unknown) => {
-  console.error(c.red(`Fatal error: ${err instanceof Error ? err.message : String(err)}`));
-  process.exitCode = 1;
-});
+const isDirectCall =
+  Boolean(process.argv[1]) &&
+  (fileURLToPath(import.meta.url) === path.resolve(process.argv[1]!) ||
+    process.argv[1]!.endsWith("agentshield") ||
+    process.argv[1]!.endsWith("cli/index.ts") ||
+    process.argv[1]!.endsWith("cli/index.js"));
+
+if (isDirectCall) {
+  main().catch((err: unknown) => {
+    console.error(c.red(`Fatal error: ${err instanceof Error ? err.message : String(err)}`));
+    process.exitCode = 1;
+  });
+}

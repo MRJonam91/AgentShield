@@ -97,21 +97,23 @@ export function startMcpProxy(
       });
 
       if (evaluation.verdict === "DENY" || evaluation.verdict === "ASK_REJECTED") {
-        // Return standard MCP tool call error response
-        const errorResponse = {
-          jsonrpc: "2.0",
-          id: request.id ?? null,
-          result: {
-            content: [
-              {
-                type: "text",
-                text: `[AgentShield DENY] Action blocked by policy: ${evaluation.reason}`,
-              },
-            ],
-            isError: true,
-          },
-        };
-        outputStream.write(JSON.stringify(errorResponse) + "\n");
+        // Return standard MCP tool call error response if request expects a response (not a notification)
+        if (request.id !== undefined) {
+          const errorResponse = {
+            jsonrpc: "2.0",
+            id: request.id,
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: `[AgentShield DENY] Action blocked by policy: ${evaluation.reason}`,
+                },
+              ],
+              isError: true,
+            },
+          };
+          outputStream.write(JSON.stringify(errorResponse) + "\n");
+        }
         return;
       }
 
@@ -166,6 +168,11 @@ export function startMcpProxy(
       // ignore
     }
   };
+
+  child.on("error", (err) => {
+    process.stderr.write(`[AgentShield MCP Error] Process spawn failed: ${err.message}\n`);
+    clientLineReader.close();
+  });
 
   child.on("exit", () => {
     clientLineReader.close();

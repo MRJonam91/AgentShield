@@ -2,7 +2,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { AuditTrail } from "./audit.ts";
+import { AuditTrail, canonicalJson } from "./audit.ts";
 import { DEFAULT_POLICY_FILE, SHIELD_ERROR_UNAUTHORIZED } from "./constants.ts";
 import { isCommandSafe, isPathSafe, isSqlSafe, isUrlSafe, redactSecrets } from "./sanitizer.ts";
 import type {
@@ -202,14 +202,19 @@ export class AgentShield {
       }
     }
 
-    // Exact argument match conditions
+    // Exact argument match conditions (supports primitives and structured objects)
     if (constraints.argumentMatches) {
       for (const [key, expectedVal] of Object.entries(constraints.argumentMatches)) {
         const actualVal = getNestedProperty(args, key);
-        if (actualVal !== expectedVal) {
+        const matches =
+          typeof expectedVal === "object" && expectedVal !== null
+            ? canonicalJson(actualVal) === canonicalJson(expectedVal)
+            : actualVal === expectedVal;
+
+        if (!matches) {
           return {
             valid: false,
-            reason: `Argument match violated for '${key}': expected '${String(expectedVal)}', got '${String(actualVal)}'`,
+            reason: `Argument match violated for '${key}': expected '${JSON.stringify(expectedVal)}', got '${JSON.stringify(actualVal)}'`,
           };
         }
       }
@@ -300,14 +305,51 @@ export class AgentShield {
     this.sessionStats.set(sessionId, stats);
   }
 
+  private getRuleSpecificity(rule: PolicyRule, agentId: string, tool: string): number {
+    let score = 0;
+
+    // Tool score
+    if (Array.isArray(rule.tool)) {
+      if (rule.tool.includes(tool)) score += 30;
+      else if (rule.tool.some((t) => t !== "*" && matchesPattern(t, tool))) score += 20;
+      else score += 10;
+    } else if (rule.tool === tool) {
+      score += 30;
+    } else if (rule.tool !== "*" && matchesPattern(rule.tool, tool)) {
+      score += 20;
+    } else {
+      score += 10;
+    }
+
+    // Agent score
+    if (rule.agent) {
+      if (Array.isArray(rule.agent)) {
+        if (rule.agent.includes(agentId)) score += 3;
+        else if (rule.agent.some((a) => a !== "*" && matchesPattern(a, agentId))) score += 2;
+        else score += 1;
+      } else if (rule.agent === agentId) {
+        score += 3;
+      } else if (rule.agent !== "*" && matchesPattern(rule.agent, agentId)) {
+        score += 2;
+      } else {
+        score += 1;
+      }
+    }
+
+    return score;
+  }
+
   /**
-   * Matches rule against agentId, tool, and optional context
+   * Matches rule against agentId, tool, and optional context, selecting the highest-specificity matching rule
    */
   private matchRule(
     agentId: string,
     tool: string,
     context?: Record<string, unknown>
   ): PolicyRule | undefined {
+    let bestRule: PolicyRule | undefined;
+    let highestScore = -1;
+
     for (const rule of this.policy.rules) {
       if (!matchesAny(rule.agent, agentId) || !matchesAny(rule.tool, tool)) {
         continue;
@@ -325,9 +367,14 @@ export class AgentShield {
         if (!contextMatched) continue;
       }
 
-      return rule;
+      const score = this.getRuleSpecificity(rule, agentId, tool);
+      if (score > highestScore) {
+        highestScore = score;
+        bestRule = rule;
+      }
     }
-    return undefined;
+
+    return bestRule;
   }
 
   /**
