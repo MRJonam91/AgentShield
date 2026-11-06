@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+*.log
+agentshield-audit.jsonl
+*.audit.jsonl
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.tsbuildinfo

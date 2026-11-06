@@ -1,0 +1,80 @@
+{
+  "name": "agentshield",
+  "version": "0.1.0",
+  "description": "Deterministic AI agent tool firewall: local policy engine with verifiable deny, ask, allow and tamper-evident cryptographic audit trail for MCP and LLM tool adapters.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "Manoj Rollo <fbxmano@gmail.com> (https://github.com/MRJonam91)",
+  "homepage": "https://github.com/MRJonam91/AgentShield#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MRJonam91/AgentShield.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MRJonam91/AgentShield/issues"
+  },
+  "keywords": [
+    "agentshield",
+    "ai-agent",
+    "security-firewall",
+    "mcp",
+    "model-context-protocol",
+    "tool-guard",
+    "policy-engine",
+    "tamper-evident",
+    "audit-trail",
+    "human-in-the-loop",
+    "cybersecurity",
+    "typescript"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "bin": {
+    "agentshield": "dist/cli/index.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "README.it.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "start": "node src/cli/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/MRJonam91"
+    },
+    {
+      "type": "ko-fi",
+      "url": "https://ko-fi.com/mrjonam"
+    },
+    {
+      "type": "buymeacoffee",
+      "url": "https://buymeacoffee.com/mrjonam"
+    },
+    {
+      "type": "paypal",
+      "url": "https://paypal.me/manorollo"
+    }
+  ],
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "typescript": "^5.7.3"
+  }
+}
