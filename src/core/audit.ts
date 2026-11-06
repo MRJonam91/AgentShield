@@ -4,7 +4,12 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { GENESIS_PREV_HASH } from "./constants.ts";
-import type { AuditRecord, AuditVerificationResult, DecisionVerdict } from "./types.ts";
+import type {
+  AuditQueryFilter,
+  AuditRecord,
+  AuditVerificationResult,
+  DecisionVerdict,
+} from "./types.ts";
 
 /**
  * Deterministically sorts object keys for canonical JSON hashing
@@ -17,7 +22,9 @@ export function canonicalJson(obj: unknown): string {
     return `[${obj.map((item) => canonicalJson(item)).join(",")}]`;
   }
   const keys = Object.keys(obj as Record<string, unknown>).sort();
-  const pairs = keys.map((k) => `${JSON.stringify(k)}:${canonicalJson((obj as Record<string, unknown>)[k])}`);
+  const pairs = keys.map(
+    (k) => `${JSON.stringify(k)}:${canonicalJson((obj as Record<string, unknown>)[k])}`
+  );
   return `{${pairs.join(",")}}`;
 }
 
@@ -51,9 +58,19 @@ export function computeRecordHash(params: {
 }
 
 /**
+ * Computes HMAC signature for a record hash given a secret key
+ */
+export function computeHmacSignature(hash: string, secret: string): string {
+  return crypto.createHmac("sha256", secret).update(hash, "utf8").digest("hex");
+}
+
+/**
  * Verifies the integrity of an array of chained audit records
  */
-export function verifyAuditChain(records: AuditRecord[]): AuditVerificationResult {
+export function verifyAuditChain(
+  records: AuditRecord[],
+  secret?: string
+): AuditVerificationResult {
   if (records.length === 0) {
     return { valid: true, totalRecords: 0 };
   }
@@ -64,7 +81,12 @@ export function verifyAuditChain(records: AuditRecord[]): AuditVerificationResul
   for (let i = 0; i < records.length; i++) {
     const record = records[i];
     if (!record) {
-      return { valid: false, totalRecords: records.length, tamperedIndex: i, error: "Undefined record found" };
+      return {
+        valid: false,
+        totalRecords: records.length,
+        tamperedIndex: i,
+        error: "Undefined record found",
+      };
     }
 
     if (record.index !== i) {
@@ -119,6 +141,27 @@ export function verifyAuditChain(records: AuditRecord[]): AuditVerificationResul
       };
     }
 
+    // Verify HMAC signature if secret provided
+    if (secret) {
+      if (!record.signature) {
+        return {
+          valid: false,
+          totalRecords: records.length,
+          tamperedIndex: i,
+          error: `Missing HMAC signature at index ${i}`,
+        };
+      }
+      const expectedSig = computeHmacSignature(record.hash, secret);
+      if (record.signature !== expectedSig) {
+        return {
+          valid: false,
+          totalRecords: records.length,
+          tamperedIndex: i,
+          error: `HMAC signature verification failed at index ${i}`,
+        };
+      }
+    }
+
     expectedPrevHash = record.hash;
   }
 
@@ -130,11 +173,13 @@ export function verifyAuditChain(records: AuditRecord[]): AuditVerificationResul
  */
 export class AuditTrail {
   private filePath?: string;
+  private secret?: string;
   private inMemoryRecords: AuditRecord[] = [];
   private lastHash: string = GENESIS_PREV_HASH;
   private nextIndex: number = 0;
 
-  constructor(filePath?: string) {
+  constructor(filePath?: string, secret?: string) {
+    this.secret = secret;
     if (filePath) {
       this.filePath = path.resolve(filePath);
       this.loadExisting();
@@ -156,7 +201,9 @@ export class AuditTrail {
         this.nextIndex = record.index + 1;
       }
     } catch (err) {
-      throw new Error(`Failed to read existing audit log from ${this.filePath}: ${(err as Error).message}`);
+      throw new Error(
+        `Failed to read existing audit log from ${this.filePath}: ${(err as Error).message}`
+      );
     }
   }
 
@@ -186,6 +233,8 @@ export class AuditTrail {
       prevHash,
     });
 
+    const signature = this.secret ? computeHmacSignature(hash, this.secret) : undefined;
+
     const record: AuditRecord = {
       index,
       id,
@@ -197,6 +246,7 @@ export class AuditTrail {
       reason: params.reason,
       prevHash,
       hash,
+      ...(signature ? { signature } : {}),
     };
 
     this.inMemoryRecords.push(record);
@@ -221,11 +271,30 @@ export class AuditTrail {
     return this.inMemoryRecords.slice(-count);
   }
 
-  public verify(): AuditVerificationResult {
-    return verifyAuditChain(this.inMemoryRecords);
+  public query(filter: AuditQueryFilter = {}): AuditRecord[] {
+    let result = this.inMemoryRecords;
+
+    if (filter.agentId) {
+      result = result.filter((r) => r.agentId === filter.agentId);
+    }
+    if (filter.tool) {
+      result = result.filter((r) => r.tool === filter.tool);
+    }
+    if (filter.decision) {
+      result = result.filter((r) => r.decision === filter.decision);
+    }
+
+    const offset = filter.offset || 0;
+    const limit = filter.limit !== undefined ? filter.limit : result.length;
+
+    return result.slice(offset, offset + limit);
   }
 
-  public static verifyFile(filePath: string): AuditVerificationResult {
+  public verify(): AuditVerificationResult {
+    return verifyAuditChain(this.inMemoryRecords, this.secret);
+  }
+
+  public static verifyFile(filePath: string, secret?: string): AuditVerificationResult {
     const resolved = path.resolve(filePath);
     if (!fs.existsSync(resolved)) {
       return { valid: false, totalRecords: 0, error: `Audit log file not found: ${filePath}` };
@@ -245,6 +314,6 @@ export class AuditTrail {
         };
       }
     }
-    return verifyAuditChain(records);
+    return verifyAuditChain(records, secret);
   }
 }

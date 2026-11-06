@@ -13,6 +13,11 @@ export interface RateLimitConstraint {
   windowSeconds: number;
 }
 
+export interface NumericBound {
+  min?: number;
+  max?: number;
+}
+
 export interface PolicyConstraints {
   /** Allowed directory paths for file operations (prevents directory traversal) */
   allowedPaths?: string[];
@@ -22,8 +27,12 @@ export interface PolicyConstraints {
   allowedCommands?: string[];
   /** Regex patterns forbidden for command/shell execution */
   forbiddenCommands?: string[];
-  /** Regex patterns to validate specific string arguments: key -> regex string */
+  /** Regex patterns to validate specific string arguments (supports dot-notation for nested fields): key -> regex string */
   argumentPatterns?: Record<string, string>;
+  /** Exact match rules for arguments (supports dot-notation) */
+  argumentMatches?: Record<string, unknown>;
+  /** Numeric min/max boundaries on numeric arguments (supports dot-notation) */
+  numericBounds?: Record<string, NumericBound>;
   /** Rate limit constraints */
   rateLimit?: RateLimitConstraint;
   /** Max allowed payload string length */
@@ -39,6 +48,8 @@ export interface PolicyRule {
   tool: string | string[];
   action: PolicyAction;
   reason?: string;
+  /** Key-value conditions that must match in request.context */
+  contextConditions?: Record<string, unknown>;
   constraints?: PolicyConstraints;
 }
 
@@ -80,6 +91,7 @@ export interface AuditRecord {
   reason: string;
   prevHash: string;
   hash: string;
+  signature?: string;
 }
 
 export interface AuditVerificationResult {
@@ -87,6 +99,21 @@ export interface AuditVerificationResult {
   totalRecords: number;
   error?: string;
   tamperedIndex?: number;
+}
+
+export interface AuditQueryFilter {
+  agentId?: string;
+  tool?: string;
+  decision?: DecisionVerdict;
+  limit?: number;
+  offset?: number;
+}
+
+export interface McpToolDefinition {
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+  [key: string]: unknown;
 }
 
 export type HumanApprovalHandler = (
@@ -98,7 +125,9 @@ export type HumanApprovalHandler = (
 export interface ShieldOptions {
   policy: ShieldPolicy;
   auditLogPath?: string;
+  auditSecret?: string;
   enableAudit?: boolean;
   onHumanApproval?: HumanApprovalHandler;
+  askTimeoutSeconds?: number;
   workingDirectory?: string;
 }
