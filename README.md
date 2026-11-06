@@ -33,8 +33,14 @@ AgentShield acts as a local, deterministic security layer intercepting every too
   - `deny`: Blocked immediately with a structured security violation response.
   - `ask`: Requires interactive human confirmation (CLI prompt or async approval hook).
   - `redact`: Automatically scrubs API keys (OpenAI, Anthropic, GitHub) and sensitive tokens.
-- **Built-in Security Guards**: Directory traversal containment (`allowedPaths`, `forbiddenPaths`), shell command injection defense, and sliding-window rate limiters.
-- **Tamper-Evident Audit Chain**: Every decision is permanently hashed and chained via SHA-256 (`prevHash`). Any manual editing or record deletion immediately invalidates the audit chain.
+- **Built-in Security Guards**:
+  - **Directory Traversal**: Strict path containment (`allowedPaths`, `forbiddenPaths`).
+  - **SSRF Defense**: Blocks loopback, cloud metadata (`169.254.169.254`), and RFC 1918 private IPs on outgoing fetch/network tools.
+  - **SQL Safety**: Heuristic detection of destructive statements on read-only database tools.
+  - **Shell Injection Defense**: Whitelists and blacklists for commands, parameters, and control characters.
+  - **Rate Limits & Session Budgets**: Sliding-window rate limiters and cumulative session spend quotas (`sessionQuota`).
+  - **Active MCP Defense**: Filters denied tools from `tools/list` to stop prompt injection reconnaissance.
+- **Tamper-Evident Audit Chain**: Every decision is permanently hashed and chained via SHA-256 (`prevHash`) with optional HMAC signature. Any manual editing or record deletion immediately invalidates the audit chain.
 - **Zero Runtime Dependencies**: Built entirely on native Node.js (`crypto`, `fs`, `readline`, `child_process`).
 
 ---

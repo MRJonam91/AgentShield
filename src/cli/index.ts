@@ -12,7 +12,7 @@ import { AgentShield } from "../core/engine.ts";
 import type { DecisionVerdict, ShieldPolicy } from "../core/types.ts";
 import { SPONSOR_HELP_LINE, sponsorFooter } from "../sponsor.ts";
 
-const VERSION = "0.3.0-beta.1";
+const VERSION = "1.0.0";
 
 const useColors = process.stdout.isTTY && !process.env.NO_COLOR;
 const c = {

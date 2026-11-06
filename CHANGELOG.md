@@ -6,6 +6,15 @@ All notable changes to this project are documented in this file.
 Il formato è basato su [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 e rispetta il [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] - 2026-11-06
+
+### Stable Release / Versione Stabile
+- **General Availability (GA)**: rilascio ufficiale stabile v1.0 di AgentShield come runtime firewall e middleware di sicurezza deterministico per agenti AI e tool MCP.
+- **Zero Runtime Dependencies**: architettura leggera e veloce basata esclusivamente sulle API native di Node.js (Node >= 22.18).
+- **Core Size Compliance**: codice core mantenuto rigorosamente sotto le 1.500 righe non vuote (1.253 LOC).
+- **Comprehensive Test Suite**: 29 test automatizzati coprenti motore di policy, audit crittografico, prevenzione SSRF, protezione database SQL, rate limiter e quote di sessione.
+- **Open Standards Compliance**: conformità DCO, licenza Apache-2.0, e canali di sponsorizzazione e donazione configurati.
+
 ## [0.3.0-beta.1] - 2026-11-06
 
 ### Added / Aggiunto

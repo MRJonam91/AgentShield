@@ -33,8 +33,14 @@ AgentShield si interpone come strato di policy deterministico e verificabile pri
   - `deny`: bloccato istantaneamente con motivazione di sicurezza strutturata.
   - `ask`: richiede approvazione interattiva umana (Human-in-the-Loop da console o callback asincrona).
   - `redact`: maschera chiavi API (OpenAI, Anthropic, GitHub) e token sensibili negli argomenti.
-- **Guardie Integrate**: contenimento dei percorsi (`allowedPaths`, `forbiddenPaths`), blocco iniezioni shell e rate limiting a finestra scorrevole.
-- **Audit Trail a Prova di Manomissione**: ogni evento è legato al precedente tramite hash SHA-256 (`prevHash`). Qualsiasi modifica, rimozione o inversione di riga invalida istantaneamente la catena crittografica.
+- **Guardie Integrate**:
+  - **Contenimento Directory**: blocco path traversal (`allowedPaths`, `forbiddenPaths`).
+  - **Difesa SSRF**: blocco loopback, endpoint metadata cloud (`169.254.169.254`) e reti private RFC 1918 su tool di rete.
+  - **Sicurezza SQL**: rilevamento euristico di operazioni distruttive su database in sola lettura.
+  - **Difesa Iniezioni Shell**: whitelist e blacklist comandi e metacaratteri di concatenazione.
+  - **Rate Limit & Budget di Sessione**: limitatori a finestra scorrevole e tetti massimi cumulativi (`sessionQuota`).
+  - **Difesa Attiva MCP**: rimozione automatica da `tools/list` dei tool con deny per prevenire la ricognizione.
+- **Audit Trail a Prova di Manomissione**: ogni evento è legato al precedente tramite hash SHA-256 (`prevHash`) con firma HMAC opzionale. Qualsiasi modifica, rimozione o inversione di riga invalida istantaneamente la catena crittografica.
 - **Zero Dipendenze Esterne a Runtime**: basato esclusivamente sui moduli standard di Node.js (`crypto`, `fs`, `readline`, `child_process`).
 
 ---

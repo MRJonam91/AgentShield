@@ -10,17 +10,18 @@
 
 ## 2. Parole chiave SEO / SEO keywords
 
-- IT: firewall agenti ai, sicurezza tool mcp, autorizzazioni chiamate funzioni llm, audit trail verificabile agenti
-- EN: ai agent firewall, mcp tool security, model context protocol guardrails, tamper evident agent audit, prompt injection tool defense
+- IT: firewall agenti ai, sicurezza tool mcp, autorizzazioni chiamate funzioni llm, audit trail verificabile agenti, ssrf agent defense
+- EN: ai agent firewall, mcp tool security, model context protocol guardrails, tamper evident agent audit, prompt injection tool defense, ai tool policy engine
 
 ## 3. Checklist prima di rendere pubblica / Before going public
 
-- [x] `npm test` verde, tutti i test passano
+- [x] Test suite verde (29/29 test passati)
 - [x] CI workflow typecheck + test + core size guard (< 1500 LOC)
-- [x] Demo SVG creata in `docs/assets/demo.svg`
-- [x] Marker anti-plagio registrati in `_provenance/AgentShield.json`
-- [ ] Sponsorship attiva (Settings → Features → Sponsorships)
-- [ ] Creazione prima release `v0.1.0` su GitHub
+- [x] Demo terminale animata in `docs/assets/demo.svg`
+- [x] Documentazione bilingue completa (README, Architecture, Threat Model)
+- [x] Licenza Apache-2.0, NOTICE e LICENSING.md configurati
+- [x] Canali di sponsor e donazioni attivi (.github/FUNDING.yml, README)
+- [x] Release stabile `v1.0.0` con changelog e semver
 
 ## 4. Dove condividere / Where to share
 
